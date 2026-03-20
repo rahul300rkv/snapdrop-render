@@ -73,10 +73,11 @@ def get_info(url: str = Query(...)):
         raise HTTPException(400, "Only YouTube and Instagram URLs supported.")
 
     result = run_ytdlp([
-        "--dump-json", "--no-playlist", "--quiet",
-        "--extractor-args", "youtube:skip=dash",
-        url
-    ])
+    "--dump-json", "--no-playlist", "--quiet",
+    "--extractor-args", "youtube:skip=dash",
+    "--js-runtime", "auto",
+    url
+])
 
     if result.returncode != 0:
         err = result.stderr.strip()
