@@ -75,7 +75,7 @@ def get_info(url: str = Query(...)):
     result = run_ytdlp([
     "--dump-json", "--no-playlist", "--quiet",
     "--extractor-args", "youtube:skip=dash",
-    "--js-runtime", "auto",
+    "--js-runtime", "quickjs",
     url
 ])
 
