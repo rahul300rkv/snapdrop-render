@@ -1,38 +1,31 @@
 from fastapi import FastAPI, HTTPException
-import yt_dlp
-import os
+from fastapi.responses import FileResponse
+import yt_dlp, subprocess, shutil, os
 
 app = FastAPI()
-@app.get("/")
-async def home():
-    return {"message": "Insta Downloader API is Running!"}
+OUTPUT_DIR = "/tmp/output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 @app.get("/download")
 async def get_reel_link(url: str):
     if not url:
         raise HTTPException(status_code=400, detail="URL is missing")
 
     ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio/best',
+        'outtmpl': f'{OUTPUT_DIR}/original.%(ext)s',
+        'merge_output_format': 'mp4',
         'quiet': True,
-        'no_warnings': True,
-        'format': 'bestvideo+bestaudio/best',
-        # 2026 Stealth: Pretend to be a mobile browser
-        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
     }
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(url, download=False)  # Just get link
             return {
                 "status": "success",
-                "title": info.get('title', 'Instagram Reel'),
+                "title": info.get('title'),
                 "download_url": info.get('url'),
-                "thumbnail": info.get('thumbnail')
+                "thumbnail": info.get('thumbnail'),
             }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-if __name__ == "__main__":
-    import uvicorn
-    # Railway will automatically provide the PORT environment variable
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
