@@ -4,392 +4,749 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Snapdrop — Download Anything</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800;900&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :root {
-    --bg: #0a0a0a;
-    --surface: #111111;
-    --border: #222222;
-    --accent: #e8ff47;
-    --text: #f0f0f0;
-    --muted: #555;
-    --radius: 16px;
-  }
+:root {
+  --bg: #0c0c0c;
+  --surface: #141414;
+  --border: #1e1e1e;
+  --text: #f0f0f0;
+  --muted: #444;
+  --radius: 18px;
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Syne', sans-serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    overflow-x: hidden;
-  }
+  /* Platform accent - changes dynamically */
+  --accent: #e8ff47;
+  --accent-rgb: 232, 255, 71;
+  --accent2: #b8cc00;
+}
 
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(232,255,71,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(232,255,71,0.03) 1px, transparent 1px);
-    background-size: 60px 60px;
-    pointer-events: none;
-    z-index: 0;
-  }
+html { scroll-behavior: smooth; }
 
-  .glow {
-    position: fixed;
-    width: 600px;
-    height: 600px;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(232,255,71,0.06) 0%, transparent 70%);
-    top: -200px;
-    left: 50%;
-    transform: translateX(-50%);
-    pointer-events: none;
-    z-index: 0;
-  }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Syne', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 80px;
+  overflow-x: hidden;
+  transition: background 0.5s ease;
+}
 
-  .container {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    max-width: 640px;
-  }
+/* Animated noise texture overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.6;
+}
 
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(232,255,71,0.08);
-    border: 1px solid rgba(232,255,71,0.2);
-    border-radius: 100px;
-    padding: 6px 16px;
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    color: var(--accent);
-    margin-bottom: 32px;
-    letter-spacing: 0.05em;
-  }
+/* Dynamic glow blob */
+.glow-blob {
+  position: fixed;
+  width: 700px;
+  height: 700px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.07) 0%, transparent 65%);
+  top: -250px;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 0;
+  transition: background 0.6s ease;
+}
 
-  .badge::before {
-    content: '';
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    animation: pulse 2s infinite;
-  }
+.container {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 680px;
+}
 
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.8); }
-  }
+/* ── Header ── */
+.header {
+  text-align: center;
+  margin-bottom: 52px;
+  animation: fadeDown 0.6s ease both;
+}
 
-  h1 {
-    font-size: clamp(42px, 8vw, 72px);
-    font-weight: 800;
-    line-height: 0.95;
-    letter-spacing: -0.03em;
-    margin-bottom: 16px;
-  }
+@keyframes fadeDown {
+  from { opacity: 0; transform: translateY(-20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-  h1 span {
-    color: var(--accent);
-    display: block;
-  }
+.wordmark {
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+  letter-spacing: 0.25em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
 
-  .subtitle {
-    font-family: 'DM Mono', monospace;
-    font-size: 14px;
-    color: var(--muted);
-    margin-bottom: 48px;
-    letter-spacing: 0.02em;
-  }
+h1 {
+  font-size: clamp(52px, 10vw, 88px);
+  font-weight: 900;
+  line-height: 0.9;
+  letter-spacing: -0.04em;
+  margin-bottom: 12px;
+}
 
-  .input-group {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 32px;
-  }
+h1 em {
+  font-style: normal;
+  color: var(--accent);
+  transition: color 0.4s ease;
+}
 
-  .input-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
+.tagline {
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
 
-  .input-wrap .icon {
-    position: absolute;
-    left: 20px;
-    color: var(--muted);
-    font-size: 18px;
-    pointer-events: none;
-  }
+/* ── Platform Selector ── */
+.selector-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+  padding-left: 2px;
+}
 
-  input[type="text"] {
-    width: 100%;
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px 20px 20px 52px;
-    font-family: 'DM Mono', monospace;
-    font-size: 14px;
-    color: var(--text);
-    outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 32px;
+  animation: fadeUp 0.6s 0.1s ease both;
+}
 
-  input[type="text"]:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(232,255,71,0.08);
-  }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-  input[type="text"]::placeholder { color: var(--muted); }
+.platform-btn {
+  position: relative;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 16px 12px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  user-select: none;
+}
 
-  button.fetch-btn {
-    width: 100%;
-    background: var(--accent);
-    color: #0a0a0a;
-    border: none;
-    border-radius: var(--radius);
-    padding: 20px;
-    font-family: 'Syne', sans-serif;
-    font-size: 16px;
-    font-weight: 700;
-    cursor: pointer;
-    letter-spacing: 0.02em;
-    transition: transform 0.15s, opacity 0.15s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-  }
+.platform-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--p-rgb, 232,255,71), 0.06);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
 
-  button.fetch-btn:hover { transform: translateY(-1px); opacity: 0.92; }
-  button.fetch-btn:active { transform: translateY(0); }
-  button.fetch-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.platform-btn:hover::before,
+.platform-btn.active::before { opacity: 1; }
 
-  .spinner {
-    width: 18px;
-    height: 18px;
-    border: 2.5px solid rgba(0,0,0,0.2);
-    border-top-color: #000;
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    display: none;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
+.platform-btn:hover {
+  border-color: rgba(var(--p-rgb, 232,255,71), 0.4);
+  transform: translateY(-2px);
+}
 
-  .result-card {
-    background: var(--surface);
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    display: none;
-    animation: slideUp 0.3s ease;
-  }
+.platform-btn.active {
+  border-color: rgba(var(--p-rgb, 232,255,71), 0.8);
+  box-shadow: 0 0 0 1px rgba(var(--p-rgb, 232,255,71), 0.15),
+              0 8px 32px rgba(var(--p-rgb, 232,255,71), 0.12);
+  transform: translateY(-2px);
+}
 
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(16px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
+.platform-btn .p-icon {
+  font-size: 26px;
+  line-height: 1;
+  filter: grayscale(0.3);
+  transition: filter 0.2s, transform 0.2s;
+}
 
-  .media-preview { position: relative; background: #000; }
+.platform-btn:hover .p-icon,
+.platform-btn.active .p-icon {
+  filter: grayscale(0);
+  transform: scale(1.1);
+}
 
-  .media-preview img {
-    width: 100%;
-    height: 240px;
-    object-fit: cover;
-    display: block;
-    opacity: 0.85;
-  }
+.platform-btn .p-name {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  transition: color 0.2s;
+}
 
-  .media-meta {
-    position: absolute;
-    bottom: 0; left: 0; right: 0;
-    padding: 20px;
-    background: linear-gradient(transparent, rgba(0,0,0,0.9));
-  }
+.platform-btn.active .p-name {
+  color: var(--text);
+}
 
-  .media-title {
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
+.platform-btn .p-check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: #000;
+  font-weight: 900;
+  opacity: 0;
+  transform: scale(0);
+  transition: opacity 0.2s, transform 0.2s;
+}
 
-  .media-info {
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    color: #aaa;
-    display: flex;
-    gap: 16px;
-  }
+.platform-btn.active .p-check {
+  opacity: 1;
+  transform: scale(1);
+}
 
-  .formats-section { padding: 20px; }
+/* ── Mode Panel ── */
+.mode-panel {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 28px;
+  animation: fadeUp 0.6s 0.2s ease both;
+  transition: border-color 0.4s;
+}
 
-  .formats-label {
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    color: var(--muted);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 12px;
-  }
+.mode-panel.has-platform {
+  border-color: rgba(var(--accent-rgb), 0.2);
+}
 
-  .formats-list { display: flex; flex-direction: column; gap: 8px; }
+.mode-header {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 
-  .format-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
-    transition: border-color 0.15s, background 0.15s;
-  }
+.mode-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+  transition: background 0.4s;
+}
 
-  .format-row:hover {
-    border-color: rgba(232,255,71,0.3);
-    background: rgba(232,255,71,0.04);
-  }
+.mode-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
 
-  .format-info { display: flex; align-items: center; gap: 12px; }
+.mode-subtitle {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
 
-  .quality-badge {
-    background: rgba(232,255,71,0.1);
-    color: var(--accent);
-    border-radius: 6px;
-    padding: 3px 10px;
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    font-weight: 500;
-  }
+.mode-body { padding: 20px 24px; }
 
-  .format-ext {
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    color: var(--muted);
-    text-transform: uppercase;
-  }
+/* URL input */
+.input-wrap {
+  position: relative;
+  margin-bottom: 14px;
+}
 
-  .dl-btn {
-    background: transparent;
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    padding: 8px 16px;
-    font-family: 'Syne', sans-serif;
-    font-size: 13px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.15s;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
+.input-prefix {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  color: var(--muted);
+  pointer-events: none;
+  user-select: none;
+}
 
-  .dl-btn:hover { background: var(--accent); border-color: var(--accent); color: #000; }
+input[type="text"] {
+  width: 100%;
+  background: rgba(255,255,255,0.03);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 16px 16px 44px;
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.25s, box-shadow 0.25s;
+}
 
-  .error-box {
-    background: rgba(255,80,80,0.07);
-    border: 1.5px solid rgba(255,80,80,0.2);
-    border-radius: var(--radius);
-    padding: 20px;
-    font-family: 'DM Mono', monospace;
-    font-size: 13px;
-    color: #ff6b6b;
-    display: none;
-    animation: slideUp 0.3s ease;
-  }
+input[type="text"]:focus {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.07);
+}
 
-  .platforms {
-    display: flex;
-    gap: 12px;
-    margin-top: 32px;
-    flex-wrap: wrap;
-  }
+input::placeholder { color: #333; }
 
-  .platform-tag {
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    padding: 5px 14px;
-    letter-spacing: 0.05em;
-  }
+/* Tips chips */
+.tips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.tip-chip {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.tip-chip:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+/* Fetch button */
+.fetch-btn {
+  width: 100%;
+  background: var(--accent);
+  color: #0a0a0a;
+  border: none;
+  border-radius: 12px;
+  padding: 18px;
+  font-family: 'Syne', sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  letter-spacing: 0.01em;
+  transition: transform 0.15s, opacity 0.15s, background 0.4s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.fetch-btn:hover:not(:disabled) { transform: translateY(-1px); opacity: 0.9; }
+.fetch-btn:active:not(:disabled) { transform: translateY(0); }
+.fetch-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(0,0,0,0.2);
+  border-top-color: #000;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  display: none;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+}
+.empty-state .es-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.3; }
+.empty-state p {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ── Error ── */
+.error-box {
+  background: rgba(255,70,70,0.07);
+  border: 1.5px solid rgba(255,70,70,0.18);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  color: #ff6b6b;
+  display: none;
+  margin-top: 12px;
+  animation: fadeUp 0.25s ease;
+  line-height: 1.6;
+}
+
+/* ── Result Card ── */
+.result-card {
+  background: var(--surface);
+  border: 1.5px solid rgba(var(--accent-rgb), 0.15);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: none;
+  animation: fadeUp 0.35s ease;
+  margin-top: 16px;
+}
+
+.thumb-wrap {
+  position: relative;
+  background: #000;
+  max-height: 260px;
+  overflow: hidden;
+}
+
+.thumb-wrap img {
+  width: 100%;
+  height: 240px;
+  object-fit: cover;
+  display: block;
+  opacity: 0.8;
+  transition: opacity 0.3s;
+}
+
+.thumb-overlay {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  padding: 20px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.92));
+}
+
+.result-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-meta {
+  display: flex;
+  gap: 14px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: #888;
+}
+
+.platform-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(var(--accent-rgb), 0.15);
+  color: var(--accent);
+  border-radius: 100px;
+  padding: 2px 10px;
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+  transition: background 0.4s, color 0.4s;
+}
+
+.formats-wrap { padding: 20px; }
+
+.formats-title {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.format-list { display: flex; flex-direction: column; gap: 8px; }
+
+.format-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.format-row:hover {
+  border-color: rgba(var(--accent-rgb), 0.25);
+  background: rgba(var(--accent-rgb), 0.04);
+}
+
+.format-left { display: flex; align-items: center; gap: 10px; }
+
+.q-badge {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  transition: background 0.4s, color 0.4s;
+  white-space: nowrap;
+}
+
+.q-ext {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.q-size {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  color: #333;
+}
+
+.dl-btn {
+  background: transparent;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 14px;
+  font-family: 'Syne', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.dl-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+
+/* ── Responsive ── */
+@media (max-width: 480px) {
+  .platform-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .platform-btn { padding: 12px 8px; }
+  .platform-btn .p-icon { font-size: 22px; }
+  h1 { font-size: 48px; }
+}
 </style>
 </head>
 <body>
-<div class="glow"></div>
+
+<div class="glow-blob" id="glowBlob"></div>
+
 <div class="container">
-  <div class="badge">SNAPDROP v2.0</div>
-  <h1>Download<span>Anything.</span></h1>
-  <p class="subtitle">// paste a link. get your video. done.</p>
 
-  <div class="input-group">
-    <div class="input-wrap">
-      <span class="icon">🔗</span>
-      <input type="text" id="urlInput" placeholder="https://www.instagram.com/reel/..." />
-    </div>
-    <button class="fetch-btn" id="fetchBtn" onclick="fetchMedia()">
-      <div class="spinner" id="spinner"></div>
-      <span id="btnText">↓ Get Download Links</span>
+  <!-- Header -->
+  <div class="header">
+    <div class="wordmark">SNAPDROP · v2.1</div>
+    <h1>Snap<em id="accentWord">Drop</em></h1>
+    <p class="tagline">// pick a platform. paste a link. done.</p>
+  </div>
+
+  <!-- Platform Selector -->
+  <div class="selector-label">Select Platform</div>
+  <div class="platform-grid" id="platformGrid">
+
+    <button class="platform-btn" data-platform="instagram"
+      data-rgb="193,53,132" data-color="#E1306C"
+      data-icon="📸" data-name="Instagram"
+      data-placeholder="instagram.com/reel/..."
+      data-tips="Reels,Posts,Stories,IGTV"
+      onclick="selectPlatform(this)">
+      <div class="p-check">✓</div>
+      <div class="p-icon">📸</div>
+      <div class="p-name">Instagram</div>
     </button>
+
+    <button class="platform-btn" data-platform="youtube"
+      data-rgb="255,0,0" data-color="#FF0000"
+      data-icon="▶️" data-name="YouTube"
+      data-placeholder="youtube.com/watch?v=... or youtu.be/..."
+      data-tips="Videos,Shorts,Playlists"
+      onclick="selectPlatform(this)">
+      <div class="p-check">✓</div>
+      <div class="p-icon">▶️</div>
+      <div class="p-name">YouTube</div>
+    </button>
+
+    <button class="platform-btn" data-platform="tiktok"
+      data-rgb="105,201,208" data-color="#69C9D0"
+      data-icon="🎵" data-name="TikTok"
+      data-placeholder="tiktok.com/@user/video/..."
+      data-tips="Videos,Sounds"
+      onclick="selectPlatform(this)">
+      <div class="p-check">✓</div>
+      <div class="p-icon">🎵</div>
+      <div class="p-name">TikTok</div>
+    </button>
+
+    <button class="platform-btn" data-platform="twitter"
+      data-rgb="29,161,242" data-color="#1DA1F2"
+      data-icon="🐦" data-name="Twitter / X"
+      data-placeholder="x.com/user/status/..."
+      data-tips="Videos,GIFs,Spaces"
+      onclick="selectPlatform(this)">
+      <div class="p-check">✓</div>
+      <div class="p-icon">🐦</div>
+      <div class="p-name">Twitter / X</div>
+    </button>
+
+    <button class="platform-btn" data-platform="facebook"
+      data-rgb="24,119,242" data-color="#1877F2"
+      data-icon="👍" data-name="Facebook"
+      data-placeholder="facebook.com/watch/?v=..."
+      data-tips="Videos,Reels,Stories"
+      onclick="selectPlatform(this)">
+      <div class="p-check">✓</div>
+      <div class="p-icon">👍</div>
+      <div class="p-name">Facebook</div>
+    </button>
+
+    <button class="platform-btn" data-platform="other"
+      data-rgb="160,160,160" data-color="#aaa"
+      data-icon="🌐" data-name="Other"
+      data-placeholder="paste any supported URL..."
+      data-tips="Vimeo,Reddit,Dailymotion,+1000 more"
+      onclick="selectPlatform(this)">
+      <div class="p-check">✓</div>
+      <div class="p-icon">🌐</div>
+      <div class="p-name">Other</div>
+    </button>
+
   </div>
 
-  <div class="error-box" id="errorBox"></div>
-
-  <div class="result-card" id="resultCard">
-    <div class="media-preview">
-      <img id="thumbnail" src="" alt="thumbnail" />
-      <div class="media-meta">
-        <div class="media-title" id="mediaTitle"></div>
-        <div class="media-info">
-          <span id="mediaAuthor"></span>
-          <span id="mediaDuration"></span>
-        </div>
-      </div>
+  <!-- Mode Panel -->
+  <div class="mode-panel" id="modePanel">
+    <div class="empty-state">
+      <div class="es-icon">↑</div>
+      <p>Select a platform above<br>to get started</p>
     </div>
-    <div class="formats-section">
-      <div class="formats-label">Available Formats</div>
-      <div class="formats-list" id="formatsList"></div>
-    </div>
   </div>
 
-  <div class="platforms">
-    <span class="platform-tag">instagram</span>
-    <span class="platform-tag">youtube</span>
-    <span class="platform-tag">twitter/x</span>
-    <span class="platform-tag">tiktok</span>
-    <span class="platform-tag">facebook</span>
-    <span class="platform-tag">+ more</span>
-  </div>
 </div>
 
 <script>
   const API_BASE = 'https://youtubedownloader.up.railway.app';
+  let activePlatform = null;
+
+  function selectPlatform(btn) {
+    // Deactivate all
+    document.querySelectorAll('.platform-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    const p = {
+      platform: btn.dataset.platform,
+      rgb:      btn.dataset.rgb,
+      color:    btn.dataset.color,
+      icon:     btn.dataset.icon,
+      name:     btn.dataset.name,
+      placeholder: btn.dataset.placeholder,
+      tips:     btn.dataset.tips.split(','),
+    };
+
+    activePlatform = p;
+
+    // Update CSS vars
+    document.documentElement.style.setProperty('--accent-rgb', p.rgb);
+    document.documentElement.style.setProperty('--accent', p.color);
+    document.documentElement.style.setProperty('--p-rgb', p.rgb);
+
+    // Update platform buttons' own rgb
+    btn.style.setProperty('--p-rgb', p.rgb);
+
+    // Update glow
+    document.getElementById('glowBlob').style.background =
+      `radial-gradient(circle, rgba(${p.rgb},0.08) 0%, transparent 65%)`;
+
+    // Render mode panel
+    renderModePanel(p);
+  }
+
+  function renderModePanel(p) {
+    const panel = document.getElementById('modePanel');
+    panel.classList.add('has-platform');
+
+    const tipsHTML = p.tips.map(t =>
+      `<span class="tip-chip" onclick="fillTip('${t}')">${t}</span>`
+    ).join('');
+
+    panel.innerHTML = `
+      <div class="mode-header">
+        <div class="mode-icon" id="modeIcon">${p.icon}</div>
+        <div>
+          <div class="mode-title">${p.name} Downloader</div>
+          <div class="mode-subtitle">Supports: ${p.tips.join(' · ')}</div>
+        </div>
+      </div>
+      <div class="mode-body">
+        <div class="input-wrap">
+          <span class="input-prefix">🔗</span>
+          <input type="text" id="urlInput"
+            placeholder="${p.placeholder}"
+            onkeydown="if(event.key==='Enter') fetchMedia()" />
+        </div>
+        <div class="tips">${tipsHTML}</div>
+        <button class="fetch-btn" id="fetchBtn" onclick="fetchMedia()">
+          <div class="spinner" id="spinner"></div>
+          <span id="btnText">↓ Get Download Links</span>
+        </button>
+        <div class="error-box" id="errorBox"></div>
+        <div class="result-card" id="resultCard"></div>
+      </div>
+    `;
+
+    // Focus input
+    setTimeout(() => document.getElementById('urlInput')?.focus(), 100);
+  }
+
+  function fillTip(tip) {
+    const input = document.getElementById('urlInput');
+    if (input) {
+      input.placeholder = `e.g. ${activePlatform?.placeholder || ''}`;
+      input.focus();
+    }
+  }
 
   async function fetchMedia() {
-    const url = document.getElementById('urlInput').value.trim();
-    if (!url) return;
+    const input = document.getElementById('urlInput');
+    const url = input?.value.trim();
+    if (!url) {
+      input?.focus();
+      return;
+    }
 
-    const btn = document.getElementById('fetchBtn');
-    const spinner = document.getElementById('spinner');
-    const btnText = document.getElementById('btnText');
+    const btn      = document.getElementById('fetchBtn');
+    const spinner  = document.getElementById('spinner');
+    const btnText  = document.getElementById('btnText');
     const errorBox = document.getElementById('errorBox');
     const resultCard = document.getElementById('resultCard');
 
@@ -400,38 +757,18 @@
     btnText.textContent = 'Fetching...';
 
     try {
-      const res = await fetch(`${API_BASE}/download?url=${encodeURIComponent(url)}`);
+      const res  = await fetch(`${API_BASE}/download?url=${encodeURIComponent(url)}`);
       const data = await res.json();
 
       if (data.status === 'error') {
-        showError(data.message || 'Failed to fetch media.');
+        showError(data.message || 'Something went wrong.');
         return;
       }
 
-      document.getElementById('thumbnail').src = data.thumbnail || '';
-      document.getElementById('mediaTitle').textContent = data.title || 'Untitled';
-      document.getElementById('mediaAuthor').textContent = data.author ? `@${data.author}` : '';
-      document.getElementById('mediaDuration').textContent = data.duration ? `⏱ ${data.duration}` : '';
-
-      const list = document.getElementById('formatsList');
-      list.innerHTML = '';
-
-      const formats = data.formats || [];
-      if (formats.length > 0) {
-        formats.filter(f => !f.isAudio).forEach(f => {
-          list.appendChild(makeFormatRow(f.label, f.container, f.size, f.downloadUrl));
-        });
-      } else if (data.download_url) {
-        list.appendChild(makeFormatRow('Best', data.ext || 'mp4', null, data.download_url));
-      } else {
-        showError('No downloadable formats found.');
-        return;
-      }
-
-      resultCard.style.display = 'block';
+      renderResult(data);
 
     } catch (e) {
-      showError('Network error. Make sure the API is running.');
+      showError('Network error — make sure the API is reachable.');
     } finally {
       btn.disabled = false;
       spinner.style.display = 'none';
@@ -439,29 +776,58 @@
     }
   }
 
-  function makeFormatRow(label, ext, size, dlUrl) {
-    const row = document.createElement('div');
-    row.className = 'format-row';
-    row.innerHTML = `
-      <div class="format-info">
-        <span class="quality-badge">${label}</span>
-        <span class="format-ext">${ext}</span>
-        ${size ? `<span style="font-family:monospace;font-size:11px;color:#555">${(size/1048576).toFixed(1)} MB</span>` : ''}
+  function renderResult(data) {
+    const resultCard = document.getElementById('resultCard');
+    const p = activePlatform;
+
+    const formats = (data.formats || []).filter(f => !f.isAudio);
+    if (!formats.length && data.download_url) {
+      formats.push({ label: 'Best', container: data.ext || 'mp4', downloadUrl: data.download_url, size: null });
+    }
+
+    const formatsHTML = formats.map(f => `
+      <div class="format-row">
+        <div class="format-left">
+          <span class="q-badge">${f.label}</span>
+          <span class="q-ext">${f.container}</span>
+          ${f.size ? `<span class="q-size">${(f.size/1048576).toFixed(1)}MB</span>` : ''}
+        </div>
+        <a class="dl-btn" href="${f.downloadUrl}" target="_blank" rel="noopener">↓ Save</a>
       </div>
-      <a class="dl-btn" href="${dlUrl}" target="_blank" rel="noopener">↓ Download</a>
+    `).join('');
+
+    resultCard.innerHTML = `
+      ${data.thumbnail ? `
+        <div class="thumb-wrap">
+          <img src="${data.thumbnail}" alt="thumbnail" onerror="this.parentElement.style.display='none'" />
+          <div class="thumb-overlay">
+            <div style="margin-bottom:8px">
+              <span class="platform-pill">${p?.icon || ''} ${data.platform || p?.name || ''}</span>
+            </div>
+            <div class="result-title">${data.title || 'Untitled'}</div>
+            <div class="result-meta">
+              ${data.author ? `<span>@${data.author}</span>` : ''}
+              ${data.duration ? `<span>⏱ ${data.duration}s</span>` : ''}
+            </div>
+          </div>
+        </div>
+      ` : ''}
+      <div class="formats-wrap">
+        <div class="formats-title">${formats.length} Format${formats.length !== 1 ? 's' : ''} Available</div>
+        <div class="format-list">${formatsHTML || '<p style="font-family:monospace;font-size:12px;color:#555">No formats found.</p>'}</div>
+      </div>
     `;
-    return row;
+
+    resultCard.style.display = 'block';
+    resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   function showError(msg) {
-    const errorBox = document.getElementById('errorBox');
-    errorBox.textContent = '⚠ ' + msg;
-    errorBox.style.display = 'block';
+    const box = document.getElementById('errorBox');
+    if (!box) return;
+    box.textContent = '⚠ ' + msg;
+    box.style.display = 'block';
   }
-
-  document.getElementById('urlInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') fetchMedia();
-  });
 </script>
 </body>
 </html>
