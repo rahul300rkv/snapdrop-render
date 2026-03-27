@@ -1,43 +1,55 @@
 import subprocess
 import os
 
-# Auto-update yt-dlp on startup to avoid stale extractors
+# Auto-update yt-dlp on startup to stay ahead of extractor changes
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import yt_dlp
 
 app = FastAPI()
 
-# Serve static files (your existing frontend)
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-
 OUTPUT_DIR = "/tmp/output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-@app.get("/")
-async def home():
-    return {"message": "Snapdrop API is Running!"}
+def format_duration(seconds):
+    if not seconds:
+        return None
+    seconds = int(seconds)
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
 
 
-@app.get("/download")
-async def get_media_link(url: str):
-    """
-    Extract direct download URL from Instagram, YouTube, or other supported sites.
-    Returns media info without downloading to server.
-    """
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is missing")
+def format_filesize(bytes_val):
+    if not bytes_val:
+        return None
+    mb = bytes_val / (1024 * 1024)
+    if mb >= 1000:
+        return f"{mb/1024:.1f} GB"
+    return f"{mb:.0f} MB"
 
-    ydl_opts = {
+
+def detect_platform(url: str) -> str:
+    if "youtube.com" in url or "youtu.be" in url:
+        return "youtube"
+    if "instagram.com" in url:
+        return "instagram"
+    return "unknown"
+
+
+def build_ydl_opts():
+    opts = {
         'quiet': True,
         'no_warnings': True,
-        'format': 'bestvideo[ext=mp4]+bestaudio/best',
-        'merge_output_format': 'mp4',
-        # Mimic a mobile Safari browser to reduce blocking
+        'extractor_retries': 3,
+        'fragment_retries': 3,
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) '
@@ -47,55 +59,143 @@ async def get_media_link(url: str):
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
-        # Allow fallback formats
-        'extractor_retries': 3,
-        'fragment_retries': 3,
     }
-
-    # Use cookies file if provided (place instagram_cookies.txt in project root)
     if os.path.exists("instagram_cookies.txt"):
-        ydl_opts['cookiefile'] = 'instagram_cookies.txt'
+        opts['cookiefile'] = 'instagram_cookies.txt'
+    return opts
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.get("/")
+async def home():
+    index = os.path.join("static", "index.html")
+    if os.path.exists(index):
+        return FileResponse(index)
+    return {"message": "SnapDrop API is Running!"}
+
+
+@app.get("/api/info")
+async def get_media_info(url: str):
+    """
+    Main endpoint called by the frontend.
+    Returns title, thumbnail, duration, author, platform, and list of formats.
+    Each format has: label, container, downloadUrl, size, isAudio.
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is missing")
+
+    platform = detect_platform(url)
+    if platform == "unknown":
+        raise HTTPException(status_code=400, detail="Only YouTube and Instagram links are supported.")
+
+    ydl_opts = build_ydl_opts()
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
-            # Handle playlists / multi-format responses
             if 'entries' in info:
                 info = info['entries'][0]
 
-            # Get best format URL
-            formats = info.get('formats', [])
-            best_url = info.get('url')
+            all_formats = info.get('formats', [])
+            formats_out = []
 
-            # Try to find a direct mp4 URL
-            for f in reversed(formats):
-                if f.get('ext') == 'mp4' and f.get('url'):
-                    best_url = f['url']
-                    break
+            if platform == "youtube":
+                seen_heights = set()
+                video_formats = [
+                    f for f in reversed(all_formats)
+                    if f.get('vcodec') != 'none'
+                    and f.get('acodec') == 'none'
+                    and f.get('height')
+                    and f.get('url')
+                ]
+                for f in video_formats:
+                    h = f['height']
+                    if h in seen_heights:
+                        continue
+                    if h not in (1080, 720, 480, 360):
+                        continue
+                    seen_heights.add(h)
+                    formats_out.append({
+                        "label": f"{h}p",
+                        "container": f.get('ext', 'mp4'),
+                        "downloadUrl": f['url'],
+                        "size": format_filesize(f.get('filesize') or f.get('filesize_approx')),
+                        "isAudio": False,
+                    })
+
+                formats_out.sort(key=lambda x: int(x['label'].replace('p', '')), reverse=True)
+
+                audio_formats = [
+                    f for f in all_formats
+                    if f.get('acodec') != 'none'
+                    and f.get('vcodec') == 'none'
+                    and f.get('url')
+                ]
+                if audio_formats:
+                    best_audio = max(audio_formats, key=lambda f: f.get('abr') or 0)
+                    formats_out.append({
+                        "label": "Audio",
+                        "container": "mp3",
+                        "downloadUrl": best_audio['url'],
+                        "size": format_filesize(best_audio.get('filesize') or best_audio.get('filesize_approx')),
+                        "isAudio": True,
+                    })
+
+                if not formats_out:
+                    best = info.get('url') or (all_formats[-1]['url'] if all_formats else None)
+                    if best:
+                        formats_out.append({
+                            "label": "Best",
+                            "container": "mp4",
+                            "downloadUrl": best,
+                            "size": None,
+                            "isAudio": False,
+                        })
+
+            elif platform == "instagram":
+                video_formats = [
+                    f for f in all_formats
+                    if f.get('vcodec') != 'none' and f.get('url')
+                ]
+                if not video_formats and info.get('url'):
+                    video_formats = [{'url': info['url'], 'ext': 'mp4', 'height': None, 'filesize': None}]
+
+                for f in reversed(video_formats):
+                    h = f.get('height')
+                    formats_out.append({
+                        "label": f"{h}p" if h else "HD",
+                        "container": f.get('ext', 'mp4'),
+                        "downloadUrl": f['url'],
+                        "size": format_filesize(f.get('filesize')),
+                        "isAudio": False,
+                    })
 
             return {
                 "status": "success",
-                "title": info.get('title', 'Media'),
-                "download_url": best_url,
+                "platform": platform,
+                "title": info.get('title') or info.get('description') or 'Instagram Reel',
                 "thumbnail": info.get('thumbnail'),
-                "duration": info.get('duration'),
-                "uploader": info.get('uploader'),
-                "ext": info.get('ext', 'mp4'),
+                "duration": format_duration(info.get('duration')),
+                "author": info.get('uploader') or info.get('channel'),
+                "formats": formats_out,
             }
 
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
-        if "login" in error_msg.lower() or "cookie" in error_msg.lower():
-            return {
-                "status": "error",
-                "message": "This content requires authentication. Please add instagram_cookies.txt to the project.",
-                "detail": error_msg,
-            }
-        return {"status": "error", "message": error_msg}
+        if "login" in error_msg.lower() or "cookie" in error_msg.lower() or "private" in error_msg.lower():
+            raise HTTPException(status_code=403, detail="This content requires login. Add instagram_cookies.txt to enable private content.")
+        raise HTTPException(status_code=422, detail=error_msg)
 
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Legacy /download endpoint kept for backwards compatibility
+@app.get("/download")
+async def download_legacy(url: str):
+    return await get_media_info(url)
 
 
 if __name__ == "__main__":
