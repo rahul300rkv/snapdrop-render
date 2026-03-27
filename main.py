@@ -3,7 +3,9 @@ import yt_dlp
 import os
 
 app = FastAPI()
-
+@app.get("/")
+async def home():
+    return {"message": "Insta Downloader API is Running!"}
 @app.get("/download")
 async def get_reel_link(url: str):
     if not url:
