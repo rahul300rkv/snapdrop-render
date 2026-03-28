@@ -1,12 +1,20 @@
 import subprocess, os
 
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
-# Write cookies from Railway environment variables to files
-for platform in ["youtube", "instagram", "twitter", "facebook", "tiktok"]:
-    env_key = f"{platform.upper()}_COOKIES"
-    if os.environ.get(env_key):
-        with open(f"{platform}_cookies.txt", "w") as f:
-            f.write(os.environ[env_key])
+
+# Write cookies from Railway environment variables to files on disk
+print("=== COOKIE ENV CHECK ===")
+for _platform in ["youtube", "instagram", "twitter", "facebook", "tiktok"]:
+    _env_key = f"{_platform.upper()}_COOKIES"
+    _val = os.environ.get(_env_key, "")
+    if _val:
+        with open(f"{_platform}_cookies.txt", "w") as _f:
+            _f.write(_val)
+        print(f"[OK] Written {_platform}_cookies.txt — {len(_val)} chars")
+    else:
+        print(f"[MISSING] {_env_key} not set")
+print("=== END COOKIE CHECK ===")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,29 +33,31 @@ app.add_middleware(
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
 @app.get("/")
 async def home():
     if os.path.exists("static/index.html"):
         return FileResponse("static/index.html")
     return {"message": "Snapdrop API Running"}
 
+
 @app.get("/debug")
 async def debug():
-    import os
     cookie_files = {}
     for platform in ["youtube", "instagram", "twitter", "facebook"]:
         path = f"{platform}_cookies.txt"
         exists = os.path.exists(path)
         size = os.path.getsize(path) if exists else 0
         cookie_files[platform] = {"exists": exists, "size_bytes": size}
-    
+
     env_vars = {}
     for platform in ["youtube", "instagram", "twitter", "facebook"]:
         key = f"{platform.upper()}_COOKIES"
         val = os.environ.get(key, "")
         env_vars[key] = f"{len(val)} chars" if val else "NOT SET"
-    
+
     return {"cookie_files": cookie_files, "env_vars": env_vars}
+
 
 def detect_platform(url):
     u = url.lower()
@@ -57,6 +67,7 @@ def detect_platform(url):
     if "twitter.com" in u or "x.com" in u: return "twitter"
     if "facebook.com" in u or "fb.watch" in u: return "facebook"
     return "other"
+
 
 def build_ydl_opts(platform):
     opts = {
@@ -72,7 +83,11 @@ def build_ydl_opts(platform):
         opts['http_headers']['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
         if os.path.exists("instagram_cookies.txt"): opts['cookiefile'] = 'instagram_cookies.txt'
     elif platform == "youtube":
-        if os.path.exists("youtube_cookies.txt"): opts['cookiefile'] = 'youtube_cookies.txt'
+        if os.path.exists("youtube_cookies.txt"):
+            opts['cookiefile'] = 'youtube_cookies.txt'
+            print(f"[yt-dlp] Using youtube_cookies.txt")
+        else:
+            print("[yt-dlp] No youtube_cookies.txt found!")
     elif platform == "tiktok":
         opts['http_headers']['Referer'] = 'https://www.tiktok.com/'
     elif platform == "twitter":
@@ -80,6 +95,7 @@ def build_ydl_opts(platform):
     elif platform == "facebook":
         if os.path.exists("facebook_cookies.txt"): opts['cookiefile'] = 'facebook_cookies.txt'
     return opts
+
 
 def extract_formats(info):
     out, seen_urls, seen_labels = [], set(), set()
@@ -91,13 +107,21 @@ def extract_formats(info):
         height = f.get('height')
         label = f"{height}p" if height else (f"{int(f['tbr'])}kbps" if f.get('tbr') else f.get('format_note') or 'Best')
         if label in seen_labels: continue
-        seen_urls.add(url); seen_labels.add(label)
-        out.append({"label": label, "container": f.get('ext','mp4'), "downloadUrl": url,
-                    "size": f.get('filesize') or f.get('filesize_approx'), "isAudio": is_audio, "height": height or 0})
+        seen_urls.add(url)
+        seen_labels.add(label)
+        out.append({
+            "label": label,
+            "container": f.get('ext', 'mp4'),
+            "downloadUrl": url,
+            "size": f.get('filesize') or f.get('filesize_approx'),
+            "isAudio": is_audio,
+            "height": height or 0
+        })
     if not out and info.get('url'):
-        out.append({"label": "Best", "container": info.get('ext','mp4'), "downloadUrl": info['url'],
-                    "size": None, "isAudio": False, "height": 0})
+        out.append({"label": "Best", "container": info.get('ext', 'mp4'),
+                    "downloadUrl": info['url'], "size": None, "isAudio": False, "height": 0})
     return out[:8]
+
 
 @app.get("/download")
 async def get_media_link(url: str):
@@ -110,8 +134,10 @@ async def get_media_link(url: str):
             if 'entries' in info: info = info['entries'][0]
             formats = extract_formats(info)
             return {
-                "status": "success", "platform": platform,
-                "title": info.get('title','Media'), "thumbnail": info.get('thumbnail'),
+                "status": "success",
+                "platform": platform,
+                "title": info.get('title', 'Media'),
+                "thumbnail": info.get('thumbnail'),
                 "duration": str(info.get('duration_string') or info.get('duration') or ''),
                 "author": info.get('uploader') or info.get('channel') or '',
                 "formats": formats,
@@ -120,11 +146,14 @@ async def get_media_link(url: str):
             }
     except yt_dlp.utils.DownloadError as e:
         msg = str(e).lower()
-        if any(k in msg for k in ["login","cookie","sign in"]): return {"status":"error","message":f"This {platform} content requires login cookies."}
-        if "private" in msg: return {"status":"error","message":"This content is private."}
-        return {"status":"error","message":str(e)}
+        if any(k in msg for k in ["login", "cookie", "sign in"]):
+            return {"status": "error", "message": f"This {platform} content requires login cookies."}
+        if "private" in msg:
+            return {"status": "error", "message": "This content is private."}
+        return {"status": "error", "message": str(e)}
     except Exception as e:
-        return {"status":"error","message":str(e)}
+        return {"status": "error", "message": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn
