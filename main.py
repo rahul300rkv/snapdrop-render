@@ -48,7 +48,6 @@ async def debug():
         env_vars[key] = f"{len(val)} chars" if val else "NOT SET"
     
     return {"cookie_files": cookie_files, "env_vars": env_vars}
-```
 
 def detect_platform(url):
     u = url.lower()
