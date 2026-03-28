@@ -74,26 +74,48 @@ def build_ydl_opts(platform):
         'quiet': True,
         'no_warnings': True,
         'extractor_retries': 3,
+        # Single-stream format — no ffmpeg merge needed
+        'format': 'best[ext=mp4]/best[ext=webm]/best',
         'http_headers': {
             'Accept-Language': 'en-US,en;q=0.9',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         },
     }
     if platform == "instagram":
-        opts['http_headers']['User-Agent'] = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
-        if os.path.exists("instagram_cookies.txt"): opts['cookiefile'] = 'instagram_cookies.txt'
+        opts['http_headers']['User-Agent'] = (
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) '
+            'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
+        )
+        if os.path.exists("instagram_cookies.txt"):
+            opts['cookiefile'] = 'instagram_cookies.txt'
+
     elif platform == "youtube":
+        # Prefer muxed mp4 streams to avoid needing ffmpeg.
+        # Falls back through progressively simpler options.
+        opts['format'] = (
+            'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]'
+            '/bestvideo[ext=mp4]+bestaudio'
+            '/best[ext=mp4][height<=1080]'
+            '/best[ext=mp4]'
+            '/best'
+        )
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
-            print(f"[yt-dlp] Using youtube_cookies.txt")
+            print("[yt-dlp] Using youtube_cookies.txt")
         else:
             print("[yt-dlp] No youtube_cookies.txt found!")
+
     elif platform == "tiktok":
         opts['http_headers']['Referer'] = 'https://www.tiktok.com/'
+
     elif platform == "twitter":
-        if os.path.exists("twitter_cookies.txt"): opts['cookiefile'] = 'twitter_cookies.txt'
+        if os.path.exists("twitter_cookies.txt"):
+            opts['cookiefile'] = 'twitter_cookies.txt'
+
     elif platform == "facebook":
-        if os.path.exists("facebook_cookies.txt"): opts['cookiefile'] = 'facebook_cookies.txt'
+        if os.path.exists("facebook_cookies.txt"):
+            opts['cookiefile'] = 'facebook_cookies.txt'
+
     return opts
 
 
@@ -101,12 +123,21 @@ def extract_formats(info):
     out, seen_urls, seen_labels = [], set(), set()
     for f in reversed(info.get('formats', [])):
         url = f.get('url', '')
-        if not url or url in seen_urls: continue
+        if not url or url in seen_urls:
+            continue
         vcodec = f.get('vcodec', '')
-        is_audio = (not vcodec or vcodec == 'none')
+        acodec = f.get('acodec', '')
+        # Skip video-only streams — they need ffmpeg to merge audio in
+        if vcodec and vcodec != 'none' and (not acodec or acodec == 'none'):
+            continue
         height = f.get('height')
-        label = f"{height}p" if height else (f"{int(f['tbr'])}kbps" if f.get('tbr') else f.get('format_note') or 'Best')
-        if label in seen_labels: continue
+        label = (
+            f"{height}p" if height
+            else (f"{int(f['tbr'])}kbps" if f.get('tbr')
+                  else f.get('format_note') or 'Best')
+        )
+        if label in seen_labels:
+            continue
         seen_urls.add(url)
         seen_labels.add(label)
         out.append({
@@ -114,12 +145,19 @@ def extract_formats(info):
             "container": f.get('ext', 'mp4'),
             "downloadUrl": url,
             "size": f.get('filesize') or f.get('filesize_approx'),
-            "isAudio": is_audio,
-            "height": height or 0
+            "isAudio": (not vcodec or vcodec == 'none'),
+            "height": height or 0,
         })
+    # Fallback if no muxed formats found
     if not out and info.get('url'):
-        out.append({"label": "Best", "container": info.get('ext', 'mp4'),
-                    "downloadUrl": info['url'], "size": None, "isAudio": False, "height": 0})
+        out.append({
+            "label": "Best",
+            "container": info.get('ext', 'mp4'),
+            "downloadUrl": info['url'],
+            "size": None,
+            "isAudio": False,
+            "height": 0,
+        })
     return out[:8]
 
 
@@ -131,7 +169,8 @@ async def get_media_link(url: str):
     try:
         with yt_dlp.YoutubeDL(build_ydl_opts(platform)) as ydl:
             info = ydl.extract_info(url, download=False)
-            if 'entries' in info: info = info['entries'][0]
+            if 'entries' in info:
+                info = info['entries'][0]
             formats = extract_formats(info)
             return {
                 "status": "success",
@@ -150,6 +189,8 @@ async def get_media_link(url: str):
             return {"status": "error", "message": f"This {platform} content requires login cookies."}
         if "private" in msg:
             return {"status": "error", "message": "This content is private."}
+        if "requested format" in msg or "format" in msg:
+            return {"status": "error", "message": "No downloadable format found for this video."}
         return {"status": "error", "message": str(e)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
