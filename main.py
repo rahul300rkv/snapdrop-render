@@ -1,7 +1,12 @@
 import subprocess, os
 
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
-
+# Write cookies from Railway environment variables to files
+for platform in ["youtube", "instagram", "twitter", "facebook", "tiktok"]:
+    env_key = f"{platform.upper()}_COOKIES"
+    if os.environ.get(env_key):
+        with open(f"{platform}_cookies.txt", "w") as f:
+            f.write(os.environ[env_key])
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
