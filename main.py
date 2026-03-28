@@ -8,7 +8,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import yt_dlp
+# Add this near the top of main.py after imports
+if os.environ.get("YOUTUBE_COOKIES"):
+    with open("youtube_cookies.txt", "w") as f:
+        f.write(os.environ["YOUTUBE_COOKIES"])
 
+if os.environ.get("INSTAGRAM_COOKIES"):
+    with open("instagram_cookies.txt", "w") as f:
+        f.write(os.environ["INSTAGRAM_COOKIES"])
 app = FastAPI()
 
 if os.path.exists("static"):
