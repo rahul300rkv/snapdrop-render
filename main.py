@@ -1,14 +1,10 @@
 import subprocess
 import os
 
-# Auto-update yt-dlp on every startup so extractors never go stale
+# Auto-update yt-dlp on every startup
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-import yt_dlp
-# Add this near the top of main.py after imports
+# Write cookies from environment variables (set these in Railway dashboard)
 if os.environ.get("YOUTUBE_COOKIES"):
     with open("youtube_cookies.txt", "w") as f:
         f.write(os.environ["YOUTUBE_COOKIES"])
@@ -16,7 +12,31 @@ if os.environ.get("YOUTUBE_COOKIES"):
 if os.environ.get("INSTAGRAM_COOKIES"):
     with open("instagram_cookies.txt", "w") as f:
         f.write(os.environ["INSTAGRAM_COOKIES"])
+
+if os.environ.get("TWITTER_COOKIES"):
+    with open("twitter_cookies.txt", "w") as f:
+        f.write(os.environ["TWITTER_COOKIES"])
+
+if os.environ.get("FACEBOOK_COOKIES"):
+    with open("facebook_cookies.txt", "w") as f:
+        f.write(os.environ["FACEBOOK_COOKIES"])
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import yt_dlp
+
 app = FastAPI()
+
+# ── CORS — allow all origins so the frontend can call the API ──
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -40,7 +60,6 @@ def detect_platform(url: str) -> str:
 
 
 def build_ydl_opts(platform: str) -> dict:
-    # Default: desktop Chrome — works best for YouTube, TikTok, Facebook, etc.
     opts = {
         'quiet': True,
         'no_warnings': True,
@@ -58,7 +77,6 @@ def build_ydl_opts(platform: str) -> dict:
     }
 
     if platform == "instagram":
-        # Instagram responds better to mobile Safari
         opts['http_headers']['User-Agent'] = (
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) '
             'AppleWebKit/605.1.15 (KHTML, like Gecko) '
@@ -68,7 +86,6 @@ def build_ydl_opts(platform: str) -> dict:
             opts['cookiefile'] = 'instagram_cookies.txt'
 
     elif platform == "youtube":
-        # YouTube needs desktop Chrome; cookies help with age-restricted content
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
 
@@ -87,7 +104,6 @@ def build_ydl_opts(platform: str) -> dict:
 
 
 def extract_formats(info: dict) -> list:
-    """Normalize yt-dlp formats into a clean list, best quality first."""
     out = []
     seen_urls = set()
     seen_labels = set()
@@ -127,7 +143,6 @@ def extract_formats(info: dict) -> list:
             "height":      height or 0,
         })
 
-    # Fallback: if yt-dlp returned a single merged URL instead of a formats list
     if not out and info.get('url'):
         out.append({
             "label":       "Best",
@@ -138,7 +153,7 @@ def extract_formats(info: dict) -> list:
             "height":      0,
         })
 
-    return out[:8]  # cap at 8 options
+    return out[:8]
 
 
 @app.get("/download")
@@ -153,7 +168,6 @@ async def get_media_link(url: str):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
-            # Unwrap playlists — take first entry
             if 'entries' in info:
                 info = info['entries'][0]
 
@@ -167,7 +181,6 @@ async def get_media_link(url: str):
                 "duration":     str(info.get('duration_string') or info.get('duration') or ''),
                 "author":       (info.get('uploader') or info.get('channel') or info.get('creator') or ''),
                 "formats":      formats,
-                # Legacy single-URL fallback (keeps old frontend working)
                 "download_url": formats[0]['downloadUrl'] if formats else None,
                 "ext":          formats[0]['container']   if formats else 'mp4',
             }
@@ -177,7 +190,7 @@ async def get_media_link(url: str):
         if any(k in msg for k in ["login", "cookie", "sign in", "log in"]):
             return {
                 "status":  "error",
-                "message": f"This {platform} content requires login. Add {platform}_cookies.txt to the project.",
+                "message": f"This {platform} content requires login cookies. Add {platform}_cookies.txt or set the {platform.upper()}_COOKIES env variable in Railway.",
             }
         if "private" in msg:
             return {"status": "error", "message": "This content is private."}
