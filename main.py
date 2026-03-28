@@ -2,7 +2,7 @@ import subprocess, os
 
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
 
-# Write cookies from environment variables to files on disk
+# Write cookies from Railway environment variables to files on disk
 print("=== COOKIE ENV CHECK ===")
 for _platform in ["youtube", "instagram", "twitter", "facebook", "tiktok"]:
     _env_key = f"{_platform.upper()}_COOKIES"
@@ -33,6 +33,14 @@ app.add_middleware(
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Read proxy from env — set PROXY_URL in Railway like:
+# http://user:pass@your-proxy-host:port
+PROXY_URL = os.environ.get("PROXY_URL", "").strip()
+if PROXY_URL:
+    print(f"[PROXY] Using proxy: {PROXY_URL[:30]}...")
+else:
+    print("[PROXY] No PROXY_URL set — YouTube may block datacenter IPs")
+
 
 @app.get("/")
 async def home():
@@ -54,7 +62,11 @@ async def debug():
         key = f"{platform.upper()}_COOKIES"
         val = os.environ.get(key, "")
         env_vars[key] = f"{len(val)} chars" if val else "NOT SET"
-    return {"cookie_files": cookie_files, "env_vars": env_vars}
+    return {
+        "cookie_files": cookie_files,
+        "env_vars": env_vars,
+        "proxy_set": bool(PROXY_URL),
+    }
 
 
 def detect_platform(url):
@@ -71,44 +83,51 @@ def build_ydl_opts(platform):
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'extractor_retries': 3,
+        'extractor_retries': 5,
         'http_headers': {
             'Accept-Language': 'en-US,en;q=0.9',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/124.0.0.0 Safari/537.36',
         },
     }
 
+    # Attach proxy for ALL platforms if set
+    if PROXY_URL:
+        opts['proxy'] = PROXY_URL
+
     if platform == "youtube":
-        # Use mobile web client — far less likely to be blocked on cloud IPs
-        # than the default web client. Also skip format pre-filtering entirely.
+        # android_vr bypasses most IP blocks, works without proxy too
         opts['extractor_args'] = {
             'youtube': {
-                'player_client': ['mweb', 'ios'],
+                'player_client': ['android_vr', 'android', 'mweb'],
             }
         }
-        opts['format'] = 'best[ext=mp4]/best'
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
             print("[yt-dlp] Using youtube_cookies.txt")
-        else:
-            print("[yt-dlp] No youtube_cookies.txt — trying without cookies")
 
     elif platform == "instagram":
         opts['http_headers']['User-Agent'] = (
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) '
-            'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
+            'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+            'Version/17.4 Mobile/15E148 Safari/604.1'
         )
+        opts['format'] = 'best[ext=mp4]/best'
         if os.path.exists("instagram_cookies.txt"):
             opts['cookiefile'] = 'instagram_cookies.txt'
 
     elif platform == "tiktok":
         opts['http_headers']['Referer'] = 'https://www.tiktok.com/'
+        opts['format'] = 'best[ext=mp4]/best'
 
     elif platform == "twitter":
+        opts['format'] = 'best[ext=mp4]/best'
         if os.path.exists("twitter_cookies.txt"):
             opts['cookiefile'] = 'twitter_cookies.txt'
 
     elif platform == "facebook":
+        opts['format'] = 'best[ext=mp4]/best'
         if os.path.exists("facebook_cookies.txt"):
             opts['cookiefile'] = 'facebook_cookies.txt'
 
@@ -138,8 +157,7 @@ def extract_formats(info):
             else (f"{int(f['tbr'])}kbps" if f.get('tbr')
                   else f.get('format_note') or f.get('format_id') or 'Best')
         )
-        base = label
-        c = 2
+        base = label; c = 2
         while label in seen_labels:
             label = f"{base}_{c}"; c += 1
 
@@ -154,17 +172,13 @@ def extract_formats(info):
             "height": height or 0,
         })
 
-    if not out:
-        fallback_url = info.get('url')
-        if fallback_url:
-            out.append({
-                "label": "Best",
-                "container": info.get('ext', 'mp4'),
-                "downloadUrl": fallback_url,
-                "size": None,
-                "isAudio": False,
-                "height": 0,
-            })
+    if not out and info.get('url'):
+        out.append({
+            "label": "Best",
+            "container": info.get('ext', 'mp4'),
+            "downloadUrl": info['url'],
+            "size": None, "isAudio": False, "height": 0,
+        })
 
     return out[:8]
 
@@ -199,8 +213,6 @@ async def get_media_link(url: str):
             return {"status": "error", "message": f"This {platform} content requires login cookies."}
         if "private" in msg:
             return {"status": "error", "message": "This content is private."}
-        if "block" in msg or "proxy" in msg or "403" in msg or "not available" in msg:
-            return {"status": "error", "message": f"YouTube is blocking this server's IP. Please add YouTube cookies in Render environment variables (YOUTUBE_COOKIES)."}
         return {"status": "error", "message": str(e)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
