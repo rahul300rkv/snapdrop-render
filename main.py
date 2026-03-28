@@ -70,11 +70,13 @@ def detect_platform(url):
 
 
 def build_ydl_opts(platform):
+    # KEY FIX: Do NOT set 'format' at all.
+    # Let yt-dlp fetch all available formats, then we pick manually.
     opts = {
         'quiet': True,
         'no_warnings': True,
         'extractor_retries': 3,
-        'format': 'best',   # simplest possible — always works
+        'skip_download': True,
         'http_headers': {
             'Accept-Language': 'en-US,en;q=0.9',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -89,9 +91,6 @@ def build_ydl_opts(platform):
             opts['cookiefile'] = 'instagram_cookies.txt'
 
     elif platform == "youtube":
-        # Try progressive mp4 (muxed) first, then any single best stream
-        # Do NOT use bestvideo+bestaudio — requires ffmpeg
-        opts['format'] = 'best[ext=mp4]/best[ext=webm]/best'
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
             print("[yt-dlp] Using youtube_cookies.txt")
@@ -112,43 +111,76 @@ def build_ydl_opts(platform):
     return opts
 
 
+def pick_best_url(info):
+    """
+    Pick the best single direct URL from all available formats.
+    Priority: muxed mp4 > muxed any > video-only mp4 > anything with a URL.
+    Never requires ffmpeg.
+    """
+    formats = info.get('formats', [])
+
+    def has_video(f): return f.get('vcodec') and f.get('vcodec') != 'none'
+    def has_audio(f): return f.get('acodec') and f.get('acodec') != 'none'
+    def is_muxed(f):  return has_video(f) and has_audio(f)
+
+    # Sort by height descending so we get best quality first
+    sorted_fmts = sorted(
+        [f for f in formats if f.get('url')],
+        key=lambda f: (f.get('height') or 0),
+        reverse=True
+    )
+
+    # 1. Best muxed mp4
+    for f in sorted_fmts:
+        if is_muxed(f) and f.get('ext') == 'mp4':
+            return f
+
+    # 2. Best muxed any container
+    for f in sorted_fmts:
+        if is_muxed(f):
+            return f
+
+    # 3. Best video-only mp4 (at least has picture)
+    for f in sorted_fmts:
+        if has_video(f) and f.get('ext') == 'mp4':
+            return f
+
+    # 4. Anything at all
+    if sorted_fmts:
+        return sorted_fmts[0]
+
+    return None
+
+
 def extract_formats(info):
-    """
-    Extract all muxed (audio+video) formats.
-    Falls back to ALL formats (including video-only) if nothing muxed is found.
-    Last resort: use info['url'] directly.
-    """
-    all_formats = info.get('formats', [])
+    """Return up to 8 format options for the frontend to show."""
+    all_fmts = [f for f in info.get('formats', []) if f.get('url')]
 
-    def is_muxed(f):
-        vcodec = f.get('vcodec', '')
-        acodec = f.get('acodec', '')
-        has_video = vcodec and vcodec != 'none'
-        has_audio = acodec and acodec != 'none'
-        return has_video and has_audio
+    def has_video(f): return f.get('vcodec') and f.get('vcodec') != 'none'
+    def has_audio(f): return f.get('acodec') and f.get('acodec') != 'none'
+    def is_muxed(f):  return has_video(f) and has_audio(f)
 
-    # First pass: muxed only
-    candidates = [f for f in all_formats if f.get('url') and is_muxed(f)]
-
-    # Second pass: anything with a URL (video-only, audio-only, whatever)
-    if not candidates:
-        candidates = [f for f in all_formats if f.get('url')]
+    # Prefer muxed, fall back to everything
+    candidates = [f for f in all_fmts if is_muxed(f)] or all_fmts
 
     out, seen_urls, seen_labels = [], set(), set()
     for f in reversed(candidates):
         url = f.get('url', '')
         if not url or url in seen_urls:
             continue
-        vcodec = f.get('vcodec', '')
-        acodec = f.get('acodec', '')
         height = f.get('height')
         label = (
             f"{height}p" if height
             else (f"{int(f['tbr'])}kbps" if f.get('tbr')
-                  else f.get('format_note') or 'Best')
+                  else f.get('format_note') or f.get('format_id') or 'Best')
         )
-        if label in seen_labels:
-            label = f"{label}_{f.get('format_id', '')}"
+        # Make label unique
+        base_label = label
+        counter = 2
+        while label in seen_labels:
+            label = f"{base_label}_{counter}"
+            counter += 1
+
         seen_urls.add(url)
         seen_labels.add(label)
         out.append({
@@ -156,20 +188,31 @@ def extract_formats(info):
             "container": f.get('ext', 'mp4'),
             "downloadUrl": url,
             "size": f.get('filesize') or f.get('filesize_approx'),
-            "isAudio": (not vcodec or vcodec == 'none'),
+            "isAudio": (not has_video(f)),
             "height": height or 0,
         })
 
-    # Last resort fallback
-    if not out and info.get('url'):
-        out.append({
-            "label": "Best",
-            "container": info.get('ext', 'mp4'),
-            "downloadUrl": info['url'],
-            "size": None,
-            "isAudio": False,
-            "height": 0,
-        })
+    # Absolute fallback
+    if not out:
+        best = pick_best_url(info)
+        if best:
+            out.append({
+                "label": "Best",
+                "container": best.get('ext', 'mp4'),
+                "downloadUrl": best['url'],
+                "size": None,
+                "isAudio": False,
+                "height": 0,
+            })
+        elif info.get('url'):
+            out.append({
+                "label": "Best",
+                "container": info.get('ext', 'mp4'),
+                "downloadUrl": info['url'],
+                "size": None,
+                "isAudio": False,
+                "height": 0,
+            })
 
     return out[:8]
 
@@ -184,10 +227,14 @@ async def get_media_link(url: str):
             info = ydl.extract_info(url, download=False)
             if 'entries' in info:
                 info = info['entries'][0]
-            formats = extract_formats(info)
 
-            if not formats:
-                return {"status": "error", "message": "No formats found for this video."}
+            formats = extract_formats(info)
+            best = pick_best_url(info)
+            best_url = best['url'] if best else (formats[0]['downloadUrl'] if formats else None)
+            best_ext = best.get('ext', 'mp4') if best else (formats[0]['container'] if formats else 'mp4')
+
+            if not best_url:
+                return {"status": "error", "message": "No downloadable stream found for this video."}
 
             return {
                 "status": "success",
@@ -197,8 +244,8 @@ async def get_media_link(url: str):
                 "duration": str(info.get('duration_string') or info.get('duration') or ''),
                 "author": info.get('uploader') or info.get('channel') or '',
                 "formats": formats,
-                "download_url": formats[0]['downloadUrl'] if formats else None,
-                "ext": formats[0]['container'] if formats else 'mp4',
+                "download_url": best_url,
+                "ext": best_ext,
             }
     except yt_dlp.utils.DownloadError as e:
         msg = str(e).lower()
