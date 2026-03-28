@@ -31,6 +31,25 @@ async def home():
         return FileResponse("static/index.html")
     return {"message": "Snapdrop API Running"}
 
+@app.get("/debug")
+async def debug():
+    import os
+    cookie_files = {}
+    for platform in ["youtube", "instagram", "twitter", "facebook"]:
+        path = f"{platform}_cookies.txt"
+        exists = os.path.exists(path)
+        size = os.path.getsize(path) if exists else 0
+        cookie_files[platform] = {"exists": exists, "size_bytes": size}
+    
+    env_vars = {}
+    for platform in ["youtube", "instagram", "twitter", "facebook"]:
+        key = f"{platform.upper()}_COOKIES"
+        val = os.environ.get(key, "")
+        env_vars[key] = f"{len(val)} chars" if val else "NOT SET"
+    
+    return {"cookie_files": cookie_files, "env_vars": env_vars}
+```
+
 def detect_platform(url):
     u = url.lower()
     if "instagram.com" in u: return "instagram"
