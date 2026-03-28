@@ -74,8 +74,7 @@ def build_ydl_opts(platform):
         'quiet': True,
         'no_warnings': True,
         'extractor_retries': 3,
-        # Single-stream format — no ffmpeg merge needed
-        'format': 'best[ext=mp4]/best[ext=webm]/best',
+        'format': 'best',   # simplest possible — always works
         'http_headers': {
             'Accept-Language': 'en-US,en;q=0.9',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -90,15 +89,9 @@ def build_ydl_opts(platform):
             opts['cookiefile'] = 'instagram_cookies.txt'
 
     elif platform == "youtube":
-        # Prefer muxed mp4 streams to avoid needing ffmpeg.
-        # Falls back through progressively simpler options.
-        opts['format'] = (
-            'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]'
-            '/bestvideo[ext=mp4]+bestaudio'
-            '/best[ext=mp4][height<=1080]'
-            '/best[ext=mp4]'
-            '/best'
-        )
+        # Try progressive mp4 (muxed) first, then any single best stream
+        # Do NOT use bestvideo+bestaudio — requires ffmpeg
+        opts['format'] = 'best[ext=mp4]/best[ext=webm]/best'
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
             print("[yt-dlp] Using youtube_cookies.txt")
@@ -120,16 +113,34 @@ def build_ydl_opts(platform):
 
 
 def extract_formats(info):
+    """
+    Extract all muxed (audio+video) formats.
+    Falls back to ALL formats (including video-only) if nothing muxed is found.
+    Last resort: use info['url'] directly.
+    """
+    all_formats = info.get('formats', [])
+
+    def is_muxed(f):
+        vcodec = f.get('vcodec', '')
+        acodec = f.get('acodec', '')
+        has_video = vcodec and vcodec != 'none'
+        has_audio = acodec and acodec != 'none'
+        return has_video and has_audio
+
+    # First pass: muxed only
+    candidates = [f for f in all_formats if f.get('url') and is_muxed(f)]
+
+    # Second pass: anything with a URL (video-only, audio-only, whatever)
+    if not candidates:
+        candidates = [f for f in all_formats if f.get('url')]
+
     out, seen_urls, seen_labels = [], set(), set()
-    for f in reversed(info.get('formats', [])):
+    for f in reversed(candidates):
         url = f.get('url', '')
         if not url or url in seen_urls:
             continue
         vcodec = f.get('vcodec', '')
         acodec = f.get('acodec', '')
-        # Skip video-only streams — they need ffmpeg to merge audio in
-        if vcodec and vcodec != 'none' and (not acodec or acodec == 'none'):
-            continue
         height = f.get('height')
         label = (
             f"{height}p" if height
@@ -137,7 +148,7 @@ def extract_formats(info):
                   else f.get('format_note') or 'Best')
         )
         if label in seen_labels:
-            continue
+            label = f"{label}_{f.get('format_id', '')}"
         seen_urls.add(url)
         seen_labels.add(label)
         out.append({
@@ -148,7 +159,8 @@ def extract_formats(info):
             "isAudio": (not vcodec or vcodec == 'none'),
             "height": height or 0,
         })
-    # Fallback if no muxed formats found
+
+    # Last resort fallback
     if not out and info.get('url'):
         out.append({
             "label": "Best",
@@ -158,6 +170,7 @@ def extract_formats(info):
             "isAudio": False,
             "height": 0,
         })
+
     return out[:8]
 
 
@@ -172,6 +185,10 @@ async def get_media_link(url: str):
             if 'entries' in info:
                 info = info['entries'][0]
             formats = extract_formats(info)
+
+            if not formats:
+                return {"status": "error", "message": "No formats found for this video."}
+
             return {
                 "status": "success",
                 "platform": platform,
@@ -189,8 +206,6 @@ async def get_media_link(url: str):
             return {"status": "error", "message": f"This {platform} content requires login cookies."}
         if "private" in msg:
             return {"status": "error", "message": "This content is private."}
-        if "requested format" in msg or "format" in msg:
-            return {"status": "error", "message": "No downloadable format found for this video."}
         return {"status": "error", "message": str(e)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
