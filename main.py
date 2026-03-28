@@ -1,4 +1,4 @@
-import subprocess, os
+import subprocess, os, time
 
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
 
@@ -33,13 +33,15 @@ app.add_middleware(
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Read proxy from env — set PROXY_URL in Railway like:
-# http://user:pass@your-proxy-host:port
 PROXY_URL = os.environ.get("PROXY_URL", "").strip()
 if PROXY_URL:
-    print(f"[PROXY] Using proxy: {PROXY_URL[:30]}...")
+    print(f"[PROXY] Using proxy: {PROXY_URL[:40]}...")
 else:
-    print("[PROXY] No PROXY_URL set — YouTube may block datacenter IPs")
+    print("[PROXY] No PROXY_URL set")
+
+# Support multiple proxies — comma separated in PROXY_URL
+# e.g. http://u:p@ip1:port,http://u:p@ip2:port
+PROXY_LIST = [p.strip() for p in PROXY_URL.split(",") if p.strip()] if PROXY_URL else []
 
 
 @app.get("/")
@@ -65,7 +67,8 @@ async def debug():
     return {
         "cookie_files": cookie_files,
         "env_vars": env_vars,
-        "proxy_set": bool(PROXY_URL),
+        "proxy_count": len(PROXY_LIST),
+        "proxy_set": bool(PROXY_LIST),
     }
 
 
@@ -79,11 +82,12 @@ def detect_platform(url):
     return "other"
 
 
-def build_ydl_opts(platform):
+def build_ydl_opts(platform, proxy=None):
     opts = {
         'quiet': True,
         'no_warnings': True,
-        'extractor_retries': 5,
+        'extractor_retries': 3,
+        'socket_timeout': 30,
         'http_headers': {
             'Accept-Language': 'en-US,en;q=0.9',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -92,12 +96,10 @@ def build_ydl_opts(platform):
         },
     }
 
-    # Attach proxy for ALL platforms if set
-    if PROXY_URL:
-        opts['proxy'] = PROXY_URL
+    if proxy:
+        opts['proxy'] = proxy
 
     if platform == "youtube":
-        # android_vr bypasses most IP blocks, works without proxy too
         opts['extractor_args'] = {
             'youtube': {
                 'player_client': ['android_vr', 'android', 'mweb'],
@@ -105,7 +107,6 @@ def build_ydl_opts(platform):
         }
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
-            print("[yt-dlp] Using youtube_cookies.txt")
 
     elif platform == "instagram":
         opts['http_headers']['User-Agent'] = (
@@ -141,8 +142,8 @@ def extract_formats(info):
     all_fmts = [f for f in info.get('formats', []) if f.get('url')]
 
     def has_video(f): return f.get('vcodec') and f.get('vcodec') != 'none'
-    def has_audio(f): return f.get('acodec') and f.get('acodec') != 'none'
-    def is_muxed(f):  return has_video(f) and has_audio(f)
+    def is_muxed(f):
+        return has_video(f) and f.get('acodec') and f.get('acodec') != 'none'
 
     candidates = [f for f in all_fmts if is_muxed(f)] or all_fmts
 
@@ -160,7 +161,6 @@ def extract_formats(info):
         base = label; c = 2
         while label in seen_labels:
             label = f"{base}_{c}"; c += 1
-
         seen_urls.add(url)
         seen_labels.add(label)
         out.append({
@@ -183,39 +183,72 @@ def extract_formats(info):
     return out[:8]
 
 
+def extract_with_retry(url, platform):
+    """Try each proxy in order, fall back to no proxy, retry on transport errors."""
+    proxies_to_try = PROXY_LIST + [None]  # try all proxies, then no proxy
+    last_error = None
+
+    for attempt, proxy in enumerate(proxies_to_try):
+        try:
+            print(f"[yt-dlp] Attempt {attempt+1} — proxy: {proxy or 'none'}")
+            opts = build_ydl_opts(platform, proxy=proxy)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if 'entries' in info:
+                    info = info['entries'][0]
+                return info, None
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            msg = str(e).lower()
+            # Only retry on connection/transport errors
+            if any(k in msg for k in ["remote end closed", "transport", "connection", "timeout", "proxy"]):
+                print(f"[yt-dlp] Transport error on attempt {attempt+1}, retrying...")
+                time.sleep(1)
+                continue
+            # For other errors (private, login, etc.) don't retry
+            return None, e
+        except Exception as e:
+            last_error = e
+            time.sleep(1)
+            continue
+
+    return None, last_error
+
+
 @app.get("/download")
 async def get_media_link(url: str):
     if not url:
         raise HTTPException(status_code=400, detail="URL is missing")
     platform = detect_platform(url)
-    try:
-        with yt_dlp.YoutubeDL(build_ydl_opts(platform)) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if 'entries' in info:
-                info = info['entries'][0]
-            formats = extract_formats(info)
-            if not formats:
-                return {"status": "error", "message": "No downloadable stream found."}
-            return {
-                "status": "success",
-                "platform": platform,
-                "title": info.get('title', 'Media'),
-                "thumbnail": info.get('thumbnail'),
-                "duration": str(info.get('duration_string') or info.get('duration') or ''),
-                "author": info.get('uploader') or info.get('channel') or '',
-                "formats": formats,
-                "download_url": formats[0]['downloadUrl'],
-                "ext": formats[0]['container'],
-            }
-    except yt_dlp.utils.DownloadError as e:
-        msg = str(e).lower()
+
+    info, error = extract_with_retry(url, platform)
+
+    if error:
+        msg = str(error).lower()
         if any(k in msg for k in ["login", "cookie", "sign in"]):
             return {"status": "error", "message": f"This {platform} content requires login cookies."}
         if "private" in msg:
             return {"status": "error", "message": "This content is private."}
-        return {"status": "error", "message": str(e)}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(error)}
+
+    if not info:
+        return {"status": "error", "message": "Could not fetch video info."}
+
+    formats = extract_formats(info)
+    if not formats:
+        return {"status": "error", "message": "No downloadable stream found."}
+
+    return {
+        "status": "success",
+        "platform": platform,
+        "title": info.get('title', 'Media'),
+        "thumbnail": info.get('thumbnail'),
+        "duration": str(info.get('duration_string') or info.get('duration') or ''),
+        "author": info.get('uploader') or info.get('channel') or '',
+        "formats": formats,
+        "download_url": formats[0]['downloadUrl'],
+        "ext": formats[0]['container'],
+    }
 
 
 if __name__ == "__main__":
