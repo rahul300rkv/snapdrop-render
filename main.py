@@ -69,6 +69,72 @@ async def debug():
     }
 
 
+# Public Invidious instances — used as YouTube fallback
+INVIDIOUS_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.privacydev.net",
+    "https://yt.drgnz.club",
+    "https://invidious.io.lol",
+]
+
+
+def fetch_from_invidious(video_id: str):
+    """Try each public Invidious instance to get stream URLs without touching YouTube directly."""
+    import urllib.request, json
+    for instance in INVIDIOUS_INSTANCES:
+        try:
+            req = urllib.request.Request(
+                f"{instance}/api/v1/videos/{video_id}",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            formats = []
+            for f in data.get("adaptiveFormats", []) + data.get("formatStreams", []):
+                url = f.get("url")
+                if not url:
+                    continue
+                height = f.get("resolution", "").replace("p", "")
+                try:
+                    height = int(height)
+                except Exception:
+                    height = 0
+                has_video = "video" in f.get("type", "")
+                formats.append({
+                    "label": f.get("resolution") or f.get("bitrate") or "Best",
+                    "container": f.get("container", "mp4"),
+                    "downloadUrl": url,
+                    "size": f.get("clen"),
+                    "isAudio": not has_video,
+                    "height": height,
+                })
+            if formats:
+                formats.sort(key=lambda x: x["height"], reverse=True)
+                return {
+                    "title": data.get("title", "YouTube Video"),
+                    "thumbnail": (data.get("videoThumbnails") or [{}])[0].get("url", ""),
+                    "duration": str(data.get("lengthSeconds", "")),
+                    "author": data.get("author", ""),
+                    "formats": formats[:8],
+                }
+        except Exception as e:
+            print(f"[Invidious] {instance} failed: {e}")
+            continue
+    return None
+
+
+def extract_video_id(url: str):
+    import re
+    patterns = [
+        r"(?:v=|youtu\.be/|/embed/|/shorts/)([a-zA-Z0-9_-]{11})",
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    return None
+
+
 def detect_platform(url):
     u = url.lower()
     if "instagram.com" in u: return "instagram"
@@ -209,7 +275,6 @@ def extract_with_retry(url, platform):
         except yt_dlp.utils.DownloadError as e:
             last_error = e
             msg = str(e).lower()
-            # Retry on transport errors AND auth errors (different client may succeed)
             retriable = [
                 "remote end closed", "transport", "connection",
                 "timeout", "proxy", "sign in", "login",
@@ -220,7 +285,6 @@ def extract_with_retry(url, platform):
                 print(f"[yt-dlp] Retriable error on attempt {attempt+1}: {str(e)[:80]}")
                 time.sleep(1)
                 continue
-            # Non-retriable: private, geo-blocked etc.
             return None, e
 
         except Exception as e:
@@ -238,6 +302,29 @@ async def get_media_link(url: str):
         raise HTTPException(status_code=400, detail="URL is missing")
 
     platform = detect_platform(url)
+
+    # For YouTube: try Invidious first (bypasses datacenter IP block entirely)
+    if platform == "youtube":
+        video_id = extract_video_id(url)
+        if video_id:
+            print(f"[Invidious] Trying for video_id: {video_id}")
+            inv_result = fetch_from_invidious(video_id)
+            if inv_result:
+                print("[Invidious] Success!")
+                return {
+                    "status": "success",
+                    "platform": "youtube",
+                    "title": inv_result["title"],
+                    "thumbnail": inv_result["thumbnail"],
+                    "duration": inv_result["duration"],
+                    "author": inv_result["author"],
+                    "formats": inv_result["formats"],
+                    "download_url": inv_result["formats"][0]["downloadUrl"],
+                    "ext": inv_result["formats"][0]["container"],
+                }
+            print("[Invidious] All instances failed, falling back to yt-dlp...")
+
+    # Fall back to yt-dlp for all other platforms (and YouTube if Invidious fails)
     info, error = extract_with_retry(url, platform)
 
     if error:
@@ -247,7 +334,7 @@ async def get_media_link(url: str):
         if "geo" in msg or "not available in your country" in msg:
             return {"status": "error", "message": "This content is not available in this region."}
         if any(k in msg for k in ["login", "cookie", "sign in", "age", "confirm"]):
-            return {"status": "error", "message": "This video is age-restricted or members-only and cannot be downloaded without login."}
+            return {"status": "error", "message": "This video is age-restricted or members-only."}
         return {"status": "error", "message": str(error)}
 
     if not info:
