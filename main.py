@@ -79,18 +79,41 @@ INVIDIOUS_INSTANCES = [
 
 
 def fetch_from_invidious(video_id: str):
-    """Try each public Invidious instance to get stream URLs without touching YouTube directly."""
     import urllib.request, json
     for instance in INVIDIOUS_INSTANCES:
         try:
             req = urllib.request.Request(
-                f"{instance}/api/v1/videos/{video_id}",
+                f"{instance}/api/v1/videos/{video_id}?fields=title,author,lengthSeconds,videoThumbnails,adaptiveFormats,formatStreams",
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             with urllib.request.urlopen(req, timeout=8) as r:
                 data = json.loads(r.read())
+
             formats = []
-            for f in data.get("adaptiveFormats", []) + data.get("formatStreams", []):
+
+            # formatStreams = muxed (video+audio together), always lower quality
+            # but NO auth needed — this is what savefrom.net serves
+            for f in data.get("formatStreams", []):
+                url = f.get("url")
+                if not url:
+                    continue
+                height = f.get("resolution", "").replace("p", "")
+                try:
+                    height = int(height)
+                except Exception:
+                    height = 0
+                formats.append({
+                    "label": f.get("resolution") or "SD",
+                    "container": f.get("container", "mp4"),
+                    "downloadUrl": url,
+                    "size": f.get("clen"),
+                    "isAudio": False,
+                    "height": height,
+                })
+
+            # adaptiveFormats = separate video+audio streams, higher quality
+            # may require auth for age-restricted — add anyway, user can try
+            for f in data.get("adaptiveFormats", []):
                 url = f.get("url")
                 if not url:
                     continue
@@ -101,15 +124,17 @@ def fetch_from_invidious(video_id: str):
                     height = 0
                 has_video = "video" in f.get("type", "")
                 formats.append({
-                    "label": f.get("resolution") or f.get("bitrate") or "Best",
+                    "label": f.get("resolution") or f.get("bitrate") or "HD",
                     "container": f.get("container", "mp4"),
                     "downloadUrl": url,
                     "size": f.get("clen"),
                     "isAudio": not has_video,
                     "height": height,
                 })
+
             if formats:
-                formats.sort(key=lambda x: x["height"], reverse=True)
+                # Sort: muxed SD first (most compatible), then HD adaptive
+                formats.sort(key=lambda x: (x["isAudio"], -x["height"]))
                 return {
                     "title": data.get("title", "YouTube Video"),
                     "thumbnail": (data.get("videoThumbnails") or [{}])[0].get("url", ""),
