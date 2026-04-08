@@ -99,12 +99,21 @@ def build_ydl_opts(platform, proxy=None):
     if proxy:
         opts['proxy'] = proxy
 
-    if platform == "youtube":
-        opts['extractor_args'] = {
-            'youtube': {
-                'player_client': ['android_vr', 'android', 'mweb'],
-            }
+    # FIXED
+if platform == "youtube":
+    opts['extractor_args'] = {
+        'youtube': {
+            'player_client': ['tv_embedded', 'tv', 'mweb'],
+            'player_skip': ['webpage', 'config'],
         }
+    }
+    opts['http_headers'].update({
+        'User-Agent': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1',
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com',
+    })
+    if os.path.exists("youtube_cookies.txt"):
+        opts['cookiefile'] = 'youtube_cookies.txt'
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
 
