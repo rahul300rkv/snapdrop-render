@@ -2,7 +2,6 @@ import subprocess, os, time
 
 subprocess.run(["pip", "install", "--upgrade", "yt-dlp"], capture_output=True)
 
-# Write cookies from Railway environment variables to files on disk
 print("=== COOKIE ENV CHECK ===")
 for _platform in ["youtube", "instagram", "twitter", "facebook", "tiktok"]:
     _env_key = f"{_platform.upper()}_COOKIES"
@@ -39,8 +38,6 @@ if PROXY_URL:
 else:
     print("[PROXY] No PROXY_URL set")
 
-# Support multiple proxies — comma separated in PROXY_URL
-# e.g. http://u:p@ip1:port,http://u:p@ip2:port
 PROXY_LIST = [p.strip() for p in PROXY_URL.split(",") if p.strip()] if PROXY_URL else []
 
 
@@ -99,21 +96,19 @@ def build_ydl_opts(platform, proxy=None):
     if proxy:
         opts['proxy'] = proxy
 
-    # FIXED
-if platform == "youtube":
-    opts['extractor_args'] = {
-        'youtube': {
-            'player_client': ['tv_embedded', 'tv', 'mweb'],
-            'player_skip': ['webpage', 'config'],
+    if platform == "youtube":
+        opts['format'] = 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best'
+        opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['ios', 'web_creator', 'tv_embedded', 'tv', 'mweb'],
+                'player_skip': ['webpage', 'config'],
+            }
         }
-    }
-    opts['http_headers'].update({
-        'User-Agent': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1',
-        'Referer': 'https://www.youtube.com/',
-        'Origin': 'https://www.youtube.com',
-    })
-    if os.path.exists("youtube_cookies.txt"):
-        opts['cookiefile'] = 'youtube_cookies.txt'
+        opts['http_headers'].update({
+            'User-Agent': 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+            'Referer': 'https://www.youtube.com/',
+            'Origin': 'https://www.youtube.com',
+        })
         if os.path.exists("youtube_cookies.txt"):
             opts['cookiefile'] = 'youtube_cookies.txt'
 
@@ -129,6 +124,11 @@ if platform == "youtube":
 
     elif platform == "tiktok":
         opts['http_headers']['Referer'] = 'https://www.tiktok.com/'
+        opts['http_headers']['User-Agent'] = (
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) '
+            'AppleWebKit/605.1.15 (KHTML, like Gecko) '
+            'Version/17.4 Mobile/15E148 Safari/604.1'
+        )
         opts['format'] = 'best[ext=mp4]/best'
 
     elif platform == "twitter":
@@ -193,8 +193,7 @@ def extract_formats(info):
 
 
 def extract_with_retry(url, platform):
-    """Try each proxy in order, fall back to no proxy, retry on transport errors."""
-    proxies_to_try = PROXY_LIST + [None]  # try all proxies, then no proxy
+    proxies_to_try = PROXY_LIST + [None]
     last_error = None
 
     for attempt, proxy in enumerate(proxies_to_try):
@@ -206,18 +205,27 @@ def extract_with_retry(url, platform):
                 if 'entries' in info:
                     info = info['entries'][0]
                 return info, None
+
         except yt_dlp.utils.DownloadError as e:
             last_error = e
             msg = str(e).lower()
-            # Only retry on connection/transport errors
-            if any(k in msg for k in ["remote end closed", "transport", "connection", "timeout", "proxy"]):
-                print(f"[yt-dlp] Transport error on attempt {attempt+1}, retrying...")
+            # Retry on transport errors AND auth errors (different client may succeed)
+            retriable = [
+                "remote end closed", "transport", "connection",
+                "timeout", "proxy", "sign in", "login",
+                "age", "confirm you're not a bot", "cookie",
+                "this video is not available", "unavailable",
+            ]
+            if any(k in msg for k in retriable):
+                print(f"[yt-dlp] Retriable error on attempt {attempt+1}: {str(e)[:80]}")
                 time.sleep(1)
                 continue
-            # For other errors (private, login, etc.) don't retry
+            # Non-retriable: private, geo-blocked etc.
             return None, e
+
         except Exception as e:
             last_error = e
+            print(f"[yt-dlp] Unexpected error on attempt {attempt+1}: {str(e)[:80]}")
             time.sleep(1)
             continue
 
@@ -228,16 +236,18 @@ def extract_with_retry(url, platform):
 async def get_media_link(url: str):
     if not url:
         raise HTTPException(status_code=400, detail="URL is missing")
-    platform = detect_platform(url)
 
+    platform = detect_platform(url)
     info, error = extract_with_retry(url, platform)
 
     if error:
         msg = str(error).lower()
-        if any(k in msg for k in ["login", "cookie", "sign in"]):
-            return {"status": "error", "message": f"This {platform} content requires login cookies."}
         if "private" in msg:
             return {"status": "error", "message": "This content is private."}
+        if "geo" in msg or "not available in your country" in msg:
+            return {"status": "error", "message": "This content is not available in this region."}
+        if any(k in msg for k in ["login", "cookie", "sign in", "age", "confirm"]):
+            return {"status": "error", "message": "This video is age-restricted or members-only and cannot be downloaded without login."}
         return {"status": "error", "message": str(error)}
 
     if not info:
